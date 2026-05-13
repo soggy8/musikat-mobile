@@ -1,5 +1,6 @@
 from app.config import Settings
 from app.database import Session
+from app.models import AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary
 from app.navidrome import NavidromeClient
 
 
@@ -88,29 +89,60 @@ async def test_get_album_maps_tracks(monkeypatch) -> None:
     assert album.tracks[0].duration == 245
 
 
-async def test_get_tracks_maps_random_songs(monkeypatch) -> None:
+async def test_get_tracks_traverses_library_and_sorts_alphabetically(monkeypatch) -> None:
+    client = make_client()
+
+    async def fake_get_artists():
+        return [ArtistSummary(id="artist-1", name="Artist One", album_count=1)]
+
+    async def fake_get_artist(artist_id: str):
+        assert artist_id == "artist-1"
+        return ArtistDetail(
+            id="artist-1",
+            name="Artist One",
+            albums=[AlbumSummary(id="album-1", name="Album One", artist="Artist One", cover_art="cover-1")],
+        )
+
+    async def fake_get_album(album_id: str):
+        assert album_id == "album-1"
+        return AlbumDetail(
+            id="album-1",
+            name="Album One",
+            artist="Artist One",
+            cover_art="cover-1",
+            tracks=[
+                {"id": "track-2", "title": "Beta", "artist": "Artist One", "album": "Album One", "cover_art": "cover-1"},
+                {"id": "track-1", "title": "Alpha", "artist": "Artist One", "album": "Album One", "cover_art": "cover-1"},
+            ],
+        )
+
+    monkeypatch.setattr(client, "get_artists", fake_get_artists)
+    monkeypatch.setattr(client, "get_artist", fake_get_artist)
+    monkeypatch.setattr(client, "get_album", fake_get_album)
+
+    tracks = await client.get_tracks()
+
+    assert tracks[0].id == "track-1"
+    assert tracks[1].id == "track-2"
+
+
+async def test_get_playlists_maps_subsonic_response(monkeypatch) -> None:
     client = make_client()
 
     async def fake_session_json(endpoint: str, **params):
-        assert endpoint == "getRandomSongs"
-        assert params == {"size": 25}
+        assert endpoint == "getPlaylists"
+        assert params == {}
         return {
-            "randomSongs": {
-                "song": [
-                    {
-                        "id": "track-1",
-                        "title": "Track One",
-                        "artist": "Artist One",
-                        "album": "Album One",
-                        "coverArt": "cover-1",
-                    }
+            "playlists": {
+                "playlist": [
+                    {"id": "playlist-1", "name": "Favorites", "songCount": 12, "duration": 3200, "owner": "andrej"}
                 ]
             }
         }
 
     monkeypatch.setattr(client, "_session_json", fake_session_json)
 
-    tracks = await client.get_tracks(size=25)
+    playlists = await client.get_playlists()
 
-    assert tracks[0].id == "track-1"
-    assert tracks[0].cover_art == "cover-1"
+    assert playlists[0].id == "playlist-1"
+    assert playlists[0].song_count == 12

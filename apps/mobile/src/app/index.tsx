@@ -15,9 +15,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getTracks, login, mediaUrl, search } from '@/api/client';
+import { getAlbums, getPlaylists, getTracks, login, mediaUrl, search } from '@/api/client';
 import { clearSession, loadSession, saveSession } from '@/lib/session';
-import type { AlbumSummary, ArtistSummary, SearchResults, Session, TrackSummary } from '@/types/api';
+import type { AlbumSummary, ArtistSummary, PlaylistSummary, SearchResults, Session, TrackSummary } from '@/types/api';
+
+type ActiveTab = 'tracks' | 'albums' | 'playlists' | 'account';
+type LibraryItem = AlbumSummary | ArtistSummary | PlaylistSummary | TrackSummary;
 
 export default function HomeScreen() {
   const [session, setSession] = useState<Session | null>(null);
@@ -26,6 +29,9 @@ export default function HomeScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [tracks, setTracks] = useState<TrackSummary[]>([]);
+  const [albumsLibrary, setAlbumsLibrary] = useState<AlbumSummary[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('tracks');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,7 +42,7 @@ export default function HomeScreen() {
       .then((stored) => {
         setSession(stored);
         if (stored) {
-          return getTracks(stored).then(setTracks);
+          return loadTab(stored, 'tracks');
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -54,7 +60,8 @@ export default function HomeScreen() {
       const nextSession = await login({ backendUrl, serverUrl, username, password });
       await saveSession(nextSession);
       setSession(nextSession);
-      setTracks(await getTracks(nextSession));
+      setActiveTab('tracks');
+      await loadTab(nextSession, 'tracks');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -81,7 +88,43 @@ export default function HomeScreen() {
     await clearSession();
     setSession(null);
     setTracks([]);
+    setAlbumsLibrary([]);
+    setPlaylists([]);
     setResults(null);
+  }
+
+  async function loadTab(currentSession: Session, tab: ActiveTab) {
+    setError(null);
+    setLoading(true);
+    try {
+      if (tab === 'tracks') {
+        setTracks(await getTracks(currentSession));
+      } else if (tab === 'albums') {
+        setAlbumsLibrary(await getAlbums(currentSession));
+      } else if (tab === 'playlists') {
+        setPlaylists(await getPlaylists(currentSession));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load library');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleTabPress(tab: ActiveTab) {
+    if (!session) {
+      return;
+    }
+    setActiveTab(tab);
+    setResults(null);
+    setQuery('');
+    if (tab === 'tracks' && tracks.length === 0) {
+      await loadTab(session, tab);
+    } else if (tab === 'albums' && albumsLibrary.length === 0) {
+      await loadTab(session, tab);
+    } else if (tab === 'playlists' && playlists.length === 0) {
+      await loadTab(session, tab);
+    }
   }
 
   if (loading && !session) {
@@ -118,14 +161,23 @@ export default function HomeScreen() {
     );
   }
 
-  const libraryItems = results ? [...searchTracks, ...albums, ...artists] : tracks;
+  const libraryItems = getVisibleItems({
+    activeTab,
+    results,
+    tracks,
+    albums: albumsLibrary,
+    playlists,
+    searchTracks,
+    searchAlbums: albums,
+    searchArtists: artists,
+  });
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
           <Text style={styles.heroEyebrow}>Good listening</Text>
-          <Text style={styles.title}>{results ? 'Search' : 'Tracks'}</Text>
+          <Text style={styles.title}>{results ? 'Search' : tabTitle(activeTab)}</Text>
           <Text style={styles.subtitle} numberOfLines={1}>{session.username} · {session.serverUrl}</Text>
         </View>
         <Pressable style={styles.avatarButton} onPress={handleLogout}>
@@ -152,22 +204,95 @@ export default function HomeScreen() {
       {error && <Text style={styles.error}>{error}</Text>}
       {loading && <ActivityIndicator color="#1db954" />}
 
-      <FlatList
+      <FlatList<LibraryItem>
         data={libraryItems}
-        keyExtractor={(item) => `${'title' in item ? 'track' : 'song_count' in item ? 'album' : 'artist'}-${item.id}`}
+        keyExtractor={(item) => `${itemType(item)}-${item.id}`}
         ListHeaderComponent={
           <View style={styles.listHeader}>
-            <Text style={styles.sectionTitle}>{results ? 'Search results' : 'Recently shuffled'}</Text>
-            <Text style={styles.sectionMeta}>{results ? `${libraryItems.length} matches` : `${tracks.length} tracks`}</Text>
+            <Text style={styles.sectionTitle}>{results ? 'Search results' : tabSubtitle(activeTab)}</Text>
+            <Text style={styles.sectionMeta}>{listCountLabel(activeTab, libraryItems.length, Boolean(results))}</Text>
           </View>
         }
-        ListEmptyComponent={!loading ? <EmptyState hasQuery={Boolean(results)} /> : null}
+        ListEmptyComponent={!loading && activeTab !== 'account' ? <EmptyState hasQuery={Boolean(results)} /> : null}
         renderItem={({ item }) => renderLibraryItem(item, session)}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
+
+      {activeTab === 'account' && !results && (
+        <AccountPanel session={session} onLogout={handleLogout} />
+      )}
+
+      <BottomNav activeTab={activeTab} onTabPress={handleTabPress} />
     </SafeAreaView>
   );
+}
+
+function getVisibleItems({
+  activeTab,
+  results,
+  tracks,
+  albums,
+  playlists,
+  searchTracks,
+  searchAlbums,
+  searchArtists,
+}: {
+  activeTab: ActiveTab;
+  results: SearchResults | null;
+  tracks: TrackSummary[];
+  albums: AlbumSummary[];
+  playlists: PlaylistSummary[];
+  searchTracks: TrackSummary[];
+  searchAlbums: AlbumSummary[];
+  searchArtists: ArtistSummary[];
+}): LibraryItem[] {
+  if (results) {
+    return [...searchTracks, ...searchAlbums, ...searchArtists];
+  }
+  if (activeTab === 'albums') {
+    return albums;
+  }
+  if (activeTab === 'playlists') {
+    return playlists;
+  }
+  if (activeTab === 'account') {
+    return [];
+  }
+  return tracks;
+}
+
+function tabTitle(tab: ActiveTab) {
+  const titles = {
+    tracks: 'Tracks',
+    albums: 'Albums',
+    playlists: 'Playlists',
+    account: 'Account',
+  };
+  return titles[tab];
+}
+
+function tabSubtitle(tab: ActiveTab) {
+  const subtitles = {
+    tracks: 'All tracks A-Z',
+    albums: 'Albums A-Z',
+    playlists: 'Your playlists',
+    account: 'Your profile',
+  };
+  return subtitles[tab];
+}
+
+function listCountLabel(tab: ActiveTab, count: number, isSearch: boolean) {
+  if (isSearch) {
+    return `${count} matches`;
+  }
+  const labels = {
+    tracks: 'tracks',
+    albums: 'albums',
+    playlists: 'playlists',
+    account: 'items',
+  };
+  return `${count} ${labels[tab]}`;
 }
 
 function LabeledInput({
@@ -198,7 +323,7 @@ function PrimaryButton({ label, disabled, onPress }: { label: string; disabled?:
   );
 }
 
-function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary, session: Session) {
+function renderLibraryItem(item: ArtistSummary | AlbumSummary | PlaylistSummary | TrackSummary, session: Session) {
   if ('title' in item) {
     const coverUri = item.cover_art ? mediaUrl(session, `/cover-art/${encodeURIComponent(item.cover_art)}`) : null;
     return (
@@ -220,7 +345,7 @@ function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary, se
     );
   }
 
-  if ('song_count' in item) {
+  if ('cover_art' in item) {
     const coverUri = item.cover_art ? mediaUrl(session, `/cover-art/${encodeURIComponent(item.cover_art)}`) : null;
     return (
       <Pressable style={styles.card} onPress={() => router.push({ pathname: '/album/[id]', params: { id: item.id } })}>
@@ -235,13 +360,35 @@ function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary, se
   }
 
   return (
+    <GenericLibraryRow item={item} />
+  );
+}
+
+function itemType(item: LibraryItem) {
+  if ('title' in item) {
+    return 'track';
+  }
+  if ('cover_art' in item) {
+    return 'album';
+  }
+  if ('duration' in item) {
+    return 'playlist';
+  }
+  return 'artist';
+}
+
+function GenericLibraryRow({ item }: { item: ArtistSummary | PlaylistSummary }) {
+  const isPlaylist = 'duration' in item;
+  return (
     <View style={styles.card}>
-      <View style={[styles.artworkSmall, styles.artistBubble]}>
+      <View style={[styles.artworkSmall, isPlaylist ? styles.playlistBubble : styles.artistBubble]}>
         <Text style={styles.artworkText}>{item.name.slice(0, 1).toUpperCase()}</Text>
       </View>
       <View style={styles.cardText}>
         <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
-        <Text style={styles.cardMeta}>{item.album_count} albums</Text>
+        <Text style={styles.cardMeta}>
+          {isPlaylist ? `Playlist · ${item.song_count} songs` : `${item.album_count} albums`}
+        </Text>
       </View>
     </View>
   );
@@ -265,6 +412,41 @@ function EmptyState({ hasQuery }: { hasQuery: boolean }) {
       <Text style={styles.emptyText}>
         {hasQuery ? 'Try a different search term.' : 'Connect to Navidrome and tracks with album art will appear here.'}
       </Text>
+    </View>
+  );
+}
+
+function AccountPanel({ session, onLogout }: { session: Session; onLogout: () => void }) {
+  return (
+    <View style={styles.accountCard}>
+      <View style={styles.accountAvatar}>
+        <Text style={styles.accountAvatarText}>{session.username.slice(0, 1).toUpperCase()}</Text>
+      </View>
+      <Text style={styles.accountName}>{session.username}</Text>
+      <Text style={styles.accountMeta} numberOfLines={1}>{session.serverUrl}</Text>
+      <PrimaryButton label="Log out" onPress={onLogout} />
+    </View>
+  );
+}
+
+function BottomNav({ activeTab, onTabPress }: { activeTab: ActiveTab; onTabPress: (tab: ActiveTab) => void }) {
+  const tabs: { id: ActiveTab; label: string }[] = [
+    { id: 'tracks', label: 'Tracks' },
+    { id: 'albums', label: 'Albums' },
+    { id: 'playlists', label: 'Playlists' },
+    { id: 'account', label: 'Account' },
+  ];
+  return (
+    <View style={styles.bottomNav}>
+      {tabs.map((tab) => {
+        const isActive = activeTab === tab.id;
+        return (
+          <Pressable key={tab.id} style={styles.navItem} onPress={() => onTabPress(tab.id)}>
+            <View style={[styles.navDot, isActive && styles.navDotActive]} />
+            <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{tab.label}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -425,7 +607,7 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   listContent: {
-    paddingBottom: 32,
+    paddingBottom: 112,
   },
   listHeader: {
     flexDirection: 'row',
@@ -461,6 +643,10 @@ const styles = StyleSheet.create({
   artistBubble: {
     borderRadius: 28,
     backgroundColor: '#333',
+  },
+  playlistBubble: {
+    borderRadius: 14,
+    backgroundColor: '#301934',
   },
   artworkText: {
     color: '#1db954',
@@ -508,5 +694,76 @@ const styles = StyleSheet.create({
   error: {
     color: '#ff6b6b',
     fontWeight: '700',
+  },
+  accountCard: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    top: 176,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#181818',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#242424',
+    padding: 22,
+  },
+  accountAvatar: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1db954',
+  },
+  accountAvatarText: {
+    color: '#031307',
+    fontSize: 38,
+    fontWeight: '900',
+  },
+  accountName: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  accountMeta: {
+    color: '#b3b3b3',
+    maxWidth: '100%',
+  },
+  bottomNav: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#181818',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#282828',
+    paddingVertical: 10,
+  },
+  navItem: {
+    alignItems: 'center',
+    gap: 5,
+    minWidth: 68,
+  },
+  navDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'transparent',
+  },
+  navDotActive: {
+    backgroundColor: '#1db954',
+  },
+  navLabel: {
+    color: '#8b8b8b',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  navLabelActive: {
+    color: '#fff',
   },
 });

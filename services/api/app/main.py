@@ -8,7 +8,17 @@ from fastapi.responses import StreamingResponse
 
 from .config import Settings, get_settings
 from .database import Session, SessionStore
-from .models import AlbumDetail, ArtistDetail, ArtistSummary, LoginRequest, LoginResponse, SearchResults, TrackSummary
+from .models import (
+    AlbumDetail,
+    AlbumSummary,
+    ArtistDetail,
+    ArtistSummary,
+    LoginRequest,
+    LoginResponse,
+    PlaylistSummary,
+    SearchResults,
+    TrackSummary,
+)
 from .navidrome import NavidromeClient
 from .security import create_session_token, create_subsonic_salt, create_subsonic_token
 
@@ -105,10 +115,19 @@ async def get_artists(client: NavidromeClient = Depends(get_navidrome_client)) -
 
 @app.get("/library/tracks", response_model=list[TrackSummary])
 async def get_tracks(
-    size: int = Query(default=50, ge=1, le=200),
     client: NavidromeClient = Depends(get_navidrome_client),
 ) -> list[TrackSummary]:
-    return await client.get_tracks(size=size)
+    return await client.get_tracks()
+
+
+@app.get("/library/albums", response_model=list[AlbumSummary])
+async def get_albums(client: NavidromeClient = Depends(get_navidrome_client)) -> list[AlbumSummary]:
+    return await client.get_albums()
+
+
+@app.get("/library/playlists", response_model=list[PlaylistSummary])
+async def get_playlists(client: NavidromeClient = Depends(get_navidrome_client)) -> list[PlaylistSummary]:
+    return await client.get_playlists()
 
 
 @app.get("/artists/{artist_id}", response_model=ArtistDetail)

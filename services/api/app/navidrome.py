@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 
 from .config import Settings
 from .database import Session
-from .models import AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, SearchResults, TrackSummary
+from .models import AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, PlaylistSummary, SearchResults, TrackSummary
 
 
 class NavidromeClient:
@@ -43,10 +43,36 @@ class NavidromeClient:
                 artists.append(_artist_summary(artist))
         return artists
 
-    async def get_tracks(self, size: int = 50) -> list[TrackSummary]:
-        payload = await self._session_json("getRandomSongs", size=size)
-        songs = payload.get("randomSongs", {}).get("song", [])
-        return [_track_summary(song) for song in songs]
+    async def get_tracks(self) -> list[TrackSummary]:
+        tracks: list[TrackSummary] = []
+        for artist in await self.get_artists():
+            artist_detail = await self.get_artist(artist.id)
+            for album in artist_detail.albums:
+                album_detail = await self.get_album(album.id)
+                tracks.extend(album_detail.tracks)
+        return sorted(tracks, key=lambda track: (track.title.casefold(), (track.artist or "").casefold()))
+
+    async def get_albums(self, size: int = 500) -> list[AlbumSummary]:
+        albums: list[AlbumSummary] = []
+        offset = 0
+        while True:
+            payload = await self._session_json(
+                "getAlbumList2",
+                type="alphabeticalByName",
+                size=size,
+                offset=offset,
+            )
+            page = [_album_summary(album) for album in payload.get("albumList2", {}).get("album", [])]
+            albums.extend(page)
+            if len(page) < size:
+                break
+            offset += size
+        return albums
+
+    async def get_playlists(self) -> list[PlaylistSummary]:
+        payload = await self._session_json("getPlaylists")
+        playlists = payload.get("playlists", {}).get("playlist", [])
+        return [_playlist_summary(playlist) for playlist in playlists]
 
     async def get_artist(self, artist_id: str) -> ArtistDetail:
         payload = await self._session_json("getArtist", id=artist_id)
@@ -189,4 +215,14 @@ def _track_summary(data: dict[str, Any]) -> TrackSummary:
         duration=data.get("duration"),
         track=data.get("track"),
         cover_art=data.get("coverArt"),
+    )
+
+
+def _playlist_summary(data: dict[str, Any]) -> PlaylistSummary:
+    return PlaylistSummary(
+        id=str(data.get("id", "")),
+        name=str(data.get("name", "Untitled Playlist")),
+        song_count=int(data.get("songCount", 0) or 0),
+        duration=data.get("duration"),
+        owner=data.get("owner"),
     )

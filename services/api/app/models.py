@@ -30,6 +30,14 @@ class AlbumSummary(BaseModel):
     song_count: int = 0
 
 
+class PlaylistSummary(BaseModel):
+    id: str
+    name: str
+    song_count: int = 0
+    duration: int | None = None
+    owner: str | None = None
+
+
 class TrackSummary(BaseModel):
     id: str
     title: str

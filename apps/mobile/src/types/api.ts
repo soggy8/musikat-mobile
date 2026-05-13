@@ -29,6 +29,14 @@ export type TrackSummary = {
   cover_art: string | null;
 };
 
+export type PlaylistSummary = {
+  id: string;
+  name: string;
+  song_count: number;
+  duration: number | null;
+  owner: string | null;
+};
+
 export type ArtistDetail = {
   id: string;
   name: string;
