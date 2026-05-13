@@ -43,6 +43,11 @@ class NavidromeClient:
                 artists.append(_artist_summary(artist))
         return artists
 
+    async def get_tracks(self, size: int = 50) -> list[TrackSummary]:
+        payload = await self._session_json("getRandomSongs", size=size)
+        songs = payload.get("randomSongs", {}).get("song", [])
+        return [_track_summary(song) for song in songs]
+
     async def get_artist(self, artist_id: str) -> ArtistDetail:
         payload = await self._session_json("getArtist", id=artist_id)
         artist = payload.get("artist", {})

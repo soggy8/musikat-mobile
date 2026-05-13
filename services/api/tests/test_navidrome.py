@@ -86,3 +86,31 @@ async def test_get_album_maps_tracks(monkeypatch) -> None:
     assert album.cover_art == "cover-1"
     assert album.tracks[0].id == "track-1"
     assert album.tracks[0].duration == 245
+
+
+async def test_get_tracks_maps_random_songs(monkeypatch) -> None:
+    client = make_client()
+
+    async def fake_session_json(endpoint: str, **params):
+        assert endpoint == "getRandomSongs"
+        assert params == {"size": 25}
+        return {
+            "randomSongs": {
+                "song": [
+                    {
+                        "id": "track-1",
+                        "title": "Track One",
+                        "artist": "Artist One",
+                        "album": "Album One",
+                        "coverArt": "cover-1",
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(client, "_session_json", fake_session_json)
+
+    tracks = await client.get_tracks(size=25)
+
+    assert tracks[0].id == "track-1"
+    assert tracks[0].cover_art == "cover-1"

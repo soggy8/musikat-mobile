@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from .config import Settings, get_settings
 from .database import Session, SessionStore
-from .models import AlbumDetail, ArtistDetail, ArtistSummary, LoginRequest, LoginResponse, SearchResults
+from .models import AlbumDetail, ArtistDetail, ArtistSummary, LoginRequest, LoginResponse, SearchResults, TrackSummary
 from .navidrome import NavidromeClient
 from .security import create_session_token, create_subsonic_salt, create_subsonic_token
 
@@ -101,6 +101,14 @@ async def login(
 @app.get("/library/artists", response_model=list[ArtistSummary])
 async def get_artists(client: NavidromeClient = Depends(get_navidrome_client)) -> list[ArtistSummary]:
     return await client.get_artists()
+
+
+@app.get("/library/tracks", response_model=list[TrackSummary])
+async def get_tracks(
+    size: int = Query(default=50, ge=1, le=200),
+    client: NavidromeClient = Depends(get_navidrome_client),
+) -> list[TrackSummary]:
+    return await client.get_tracks(size=size)
 
 
 @app.get("/artists/{artist_id}", response_model=ArtistDetail)

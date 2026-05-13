@@ -1,4 +1,4 @@
-import type { AlbumDetail, ArtistSummary, SearchResults, Session } from '@/types/api';
+import type { AlbumDetail, ArtistSummary, SearchResults, Session, TrackSummary } from '@/types/api';
 
 type LoginPayload = {
   backendUrl: string;
@@ -34,6 +34,10 @@ export async function login(payload: LoginPayload): Promise<Session> {
 
 export function getArtists(session: Session): Promise<ArtistSummary[]> {
   return request(session, '/library/artists');
+}
+
+export function getTracks(session: Session): Promise<TrackSummary[]> {
+  return request(session, '/library/tracks');
 }
 
 export function getAlbum(session: Session, albumId: string): Promise<AlbumDetail> {

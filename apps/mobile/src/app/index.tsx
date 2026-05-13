@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getArtists, login, search } from '@/api/client';
+import { getTracks, login, mediaUrl, search } from '@/api/client';
 import { clearSession, loadSession, saveSession } from '@/lib/session';
 import type { AlbumSummary, ArtistSummary, SearchResults, Session, TrackSummary } from '@/types/api';
 
@@ -24,7 +25,7 @@ export default function HomeScreen() {
   const [serverUrl, setServerUrl] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [artists, setArtists] = useState<ArtistSummary[]>([]);
+  const [tracks, setTracks] = useState<TrackSummary[]>([]);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +36,7 @@ export default function HomeScreen() {
       .then((stored) => {
         setSession(stored);
         if (stored) {
-          return getArtists(stored).then(setArtists);
+          return getTracks(stored).then(setTracks);
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -43,7 +44,8 @@ export default function HomeScreen() {
   }, []);
 
   const albums = useMemo(() => results?.albums ?? [], [results]);
-  const tracks = useMemo(() => results?.tracks ?? [], [results]);
+  const searchTracks = useMemo(() => results?.tracks ?? [], [results]);
+  const artists = useMemo(() => results?.artists ?? [], [results]);
 
   async function handleLogin() {
     setError(null);
@@ -52,7 +54,7 @@ export default function HomeScreen() {
       const nextSession = await login({ backendUrl, serverUrl, username, password });
       await saveSession(nextSession);
       setSession(nextSession);
-      setArtists(await getArtists(nextSession));
+      setTracks(await getTracks(nextSession));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -78,7 +80,7 @@ export default function HomeScreen() {
   async function handleLogout() {
     await clearSession();
     setSession(null);
-    setArtists([]);
+    setTracks([]);
     setResults(null);
   }
 
@@ -116,14 +118,14 @@ export default function HomeScreen() {
     );
   }
 
-  const libraryItems = [...albums, ...tracks, ...artists];
+  const libraryItems = results ? [...searchTracks, ...albums, ...artists] : tracks;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
           <Text style={styles.heroEyebrow}>Good listening</Text>
-          <Text style={styles.title}>Your Library</Text>
+          <Text style={styles.title}>{results ? 'Search' : 'Tracks'}</Text>
           <Text style={styles.subtitle} numberOfLines={1}>{session.username} · {session.serverUrl}</Text>
         </View>
         <Pressable style={styles.avatarButton} onPress={handleLogout}>
@@ -155,12 +157,12 @@ export default function HomeScreen() {
         keyExtractor={(item) => `${'title' in item ? 'track' : 'song_count' in item ? 'album' : 'artist'}-${item.id}`}
         ListHeaderComponent={
           <View style={styles.listHeader}>
-            <Text style={styles.sectionTitle}>{results ? 'Search results' : 'Artists'}</Text>
-            <Text style={styles.sectionMeta}>{results ? `${libraryItems.length} matches` : `${artists.length} artists`}</Text>
+            <Text style={styles.sectionTitle}>{results ? 'Search results' : 'Recently shuffled'}</Text>
+            <Text style={styles.sectionMeta}>{results ? `${libraryItems.length} matches` : `${tracks.length} tracks`}</Text>
           </View>
         }
         ListEmptyComponent={!loading ? <EmptyState hasQuery={Boolean(results)} /> : null}
-        renderItem={({ item }) => renderLibraryItem(item)}
+        renderItem={({ item }) => renderLibraryItem(item, session)}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
@@ -196,8 +198,9 @@ function PrimaryButton({ label, disabled, onPress }: { label: string; disabled?:
   );
 }
 
-function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary) {
+function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary, session: Session) {
   if ('title' in item) {
+    const coverUri = item.cover_art ? mediaUrl(session, `/cover-art/${encodeURIComponent(item.cover_art)}`) : null;
     return (
       <Pressable
         style={styles.card}
@@ -207,9 +210,7 @@ function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary) {
             params: { id: item.id, title: item.title, artist: item.artist ?? '', album: item.album ?? '' },
           })
         }>
-        <View style={styles.artworkSmall}>
-          <Text style={styles.artworkText}>T</Text>
-        </View>
+        <CoverThumb uri={coverUri} label="T" />
         <View style={styles.cardText}>
           <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
           <Text style={styles.cardMeta} numberOfLines={1}>Song · {item.artist ?? 'Unknown Artist'} · {item.album ?? 'Unknown Album'}</Text>
@@ -220,11 +221,10 @@ function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary) {
   }
 
   if ('song_count' in item) {
+    const coverUri = item.cover_art ? mediaUrl(session, `/cover-art/${encodeURIComponent(item.cover_art)}`) : null;
     return (
       <Pressable style={styles.card} onPress={() => router.push({ pathname: '/album/[id]', params: { id: item.id } })}>
-        <View style={styles.artworkSmall}>
-          <Text style={styles.artworkText}>A</Text>
-        </View>
+        <CoverThumb uri={coverUri} label="A" />
         <View style={styles.cardText}>
           <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
           <Text style={styles.cardMeta} numberOfLines={1}>Album · {item.artist ?? 'Unknown Artist'} · {item.song_count} songs</Text>
@@ -247,12 +247,23 @@ function renderLibraryItem(item: ArtistSummary | AlbumSummary | TrackSummary) {
   );
 }
 
+function CoverThumb({ uri, label }: { uri: string | null; label: string }) {
+  if (uri) {
+    return <Image source={{ uri }} style={styles.artworkSmall} />;
+  }
+  return (
+    <View style={styles.artworkSmall}>
+      <Text style={styles.artworkText}>{label}</Text>
+    </View>
+  );
+}
+
 function EmptyState({ hasQuery }: { hasQuery: boolean }) {
   return (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>{hasQuery ? 'No results found' : 'No artists loaded yet'}</Text>
+      <Text style={styles.emptyTitle}>{hasQuery ? 'No results found' : 'No tracks loaded yet'}</Text>
       <Text style={styles.emptyText}>
-        {hasQuery ? 'Try a different search term.' : 'Connect to Navidrome and your artists will appear here.'}
+        {hasQuery ? 'Try a different search term.' : 'Connect to Navidrome and tracks with album art will appear here.'}
       </Text>
     </View>
   );
